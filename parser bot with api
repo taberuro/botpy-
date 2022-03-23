@@ -1,0 +1,457 @@
+////////////////////////////////////PARSER///////////////////////////////////////////
+import asyncio
+import json
+import time
+import requests
+
+from aiogram.types import ParseMode
+from bs4 import BeautifulSoup as bs
+from config import session, YOULA_TOKEN
+
+
+async def get_advert(url):
+    t = time.time()
+    async with session.get(url) as resp:
+        r = await resp.text()
+    soup = bs(r, 'html.parser')
+    title = soup.find('title').text.split('•')[0].rsplit(' ', 2)[0]
+    try:
+        adv = json.loads(str(soup).split('}}},"pageView":')[1].split("}');")[0])
+    except IndexError:
+        print(url, soup)
+        adv = json.loads(
+            str(soup).split('window.__PRERENDERED_STATE__= ')[1].split('window.__LANG_CONFIG__=')[0].replace(
+                ',"cookies":{}};', '}'))
+        price = adv['ad']['ad']['price']['regularPrice']['value']
+        adv_id = adv['ad']['ad']['id']
+        user_id = adv['ad']['ad']['user']['id']
+    else:
+        price = adv['ad_price']
+        adv_id = adv['ad_id']
+        user_id = adv['seller_id']
+
+
+    async with session.post(f'https://m.youla.ru/your_api/vx/offers/{adv_id}/page-views/',
+                            headers={'Authorization': YOULA_TOKEN}) as resp:
+        response = await resp.text()
+
+    view = json.loads(response)['data']
+    async with session.get(f'https://m.youla.ru/your_api/vx/offers/{adv_id}/phones/',
+                           headers={'Authorization': YOULA_TOKEN}) as resp:
+        response = await resp.text()
+
+    try:
+        phone = f"48{json.loads(response)['data']['phones'][0].replace(' ', '')}"
+    except IndexError:
+        phone = None
+    async with session.get('https://m.youla.ru/your_api/vx/offers/',
+                           params={'offset': 0, 'limit': 50, 'user_id': int(user_id)},
+                           headers={'Authorization': YOULA_TOKEN}) as resp:
+        response = await resp.text()
+    advl = len(json.loads(response)['data'])
+    async with session.get(f'https://m.youla.ru/your_api/vx//{user_id}/',
+                           headers={'Authorization': YOULA_TOKEN}) as resp:
+        response = await resp.text()
+    reg = json.loads(response)['data']['created'].split('-')[0]
+    info = {'url': url, 'title': title, 'price': price, 'phone': phone, 'reg': reg, 'adv': advl,
+            'id': user_id, 'sleep': time.time() - t}
+    return info
+
+
+async def arange(count, c):
+    for i in range(count, c):
+        yield (i)
+
+
+async def get_adverts(url, min_price, max_price, city, bot):
+    'glogow/?search[filter_float_price:from]={min_price}&search[filter_float_price:to]={max_price}&page={i}'
+    try:
+        ad_array = []
+        async with session.get(url) as resp:
+            pages = await resp.text()
+        soup = bs(pages, 'html.parser')
+        pages = int(soup.find_all('a', class_='block br3 brc8 large tdnone lheight24')[-1]['href'].split('=')[-1])
+        if pages >= 4:
+            pages = 3
+
+        for i in range(1, pages + 1):
+            async with session.get(
+                    url + f'{city}/?search[filter_float_price:from]={min_price}&search[filter_float_price:to]={max_price}&page={i}') as resp:
+                result = await resp.text()
+
+            html_tree = bs(result, "html.parser")
+            ads = html_tree.select('#offers_table tr.wrap table')
+
+            for ad in ads:
+
+                ad_url = ad.select('td')[0].select('a')[0]['href']
+                if 'youla.ru' not in ad_url:
+                    continue
+                ad_array.append(ad_url)
+        await bot[0].send_message(chat_id=bot[1], text=f'\n ☁️  <i>Найдено бъявлений:</i> <b>{len(ad_array)}</b>',
+                                  parse_mode=ParseMode.HTML)
+        for i in ad_array:
+            try:
+                advert = await get_advert(i)
+            except:
+                continue
+            if not advert:
+                continue
+            if advert['sleep'] < 3:
+                await asyncio.sleep(3 - advert['sleep'])
+
+
+
+
+
+            await bot[0].send_message(chat_id=bot[1], text=f'<i>   Название:</i> <b>{advert["title"]}</b>'
+                                                           f'\n<i> Ссылка:</i> <b>{advert["url"]}</b>'
+                                                           f'\n<i> Цена:</i> <b>{advert["price"]}</b>'
+                                                           f'\n<i> Номер:</i> <b>+{advert["phone"]}</b>'
+                                                           f'\n<i> Просмотры:</i> <b>{advert["view"]}</b>'
+                                                           f'\n<i> Год регистрации продавца:</i> <b>{advert["reg"]}</b>'
+                                                           f'\n<i> Объявлений у продавца:</i>  <b>{advert["adv"]}</b>',
+                                      disable_web_page_preview=True,
+                                      parse_mode=ParseMode.HTML)
+
+
+    except:
+        await bot[0].send_message(chat_id=bot[1], text='<i>ВСЁ ПОШЛО ПО ПИЗДЕ.</i>',
+                                  parse_mode=ParseMode.HTML)
+///////////////////////////////////CONFIG/////////////////////////////////////////
+import aiohttp
+DB_URL = ''
+BOT_TOKEN = ''
+YOULA_TOKEN = ''
+ADMIN_USERNAME = '@taberuro' #if you have some questions, you can ask me on tg or rename to your admin
+ADMINS = ()
+session = aiohttp.ClientSession()
+# UPD:попробовал на открытой сессии
+///////////////////////////////////CATRGORIES/////////////////////////////////////////
+category = ['nedvijimost', 'auto', 'uslugi', 'zayavki', 'zhenskaya-odezhda', 'smartfony-planshety', 'avto-moto',
+            'detskaya-odezhda',
+            'rabota', 'spetstehnika-moto', 'muzhskaya-odezhda', 'detskie', 'hehndmejd', 'foto-video', 'kompyutery',
+            'ehlektronika',
+            'bytovaya-tekhnika', 'dom-dacha', 'remont-i-stroitelstvo', 'krasota-i-zdorove', 'sport-otdyh',
+            'hobbi-razvlecheniya',
+            'zhivotnye', 'dlya-biznesa', 'prochee']
+
+category_dict = {'nedvijimost': 'Недвижимость', 'auto': 'легковые автомобили', 'uslugi': 'услуги исполнителей',
+                 'zayavki': 'заявки',
+                 'zhenskaya-odezhda': 'женская одежда',
+                 'smartfony-planshety': 'смартфоны и планшеты',
+                 'avto-moto': 'мототехника', 'detskaya-odezhda': 'детская одежда',
+                 'rabota': 'работа', 'spetstehnika-moto': 'спецтехника', 'muzhskaya-odezhda': 'мужчкая одежда',
+                 'detskie': 'детское', 'hehndmejd': 'хэндмейд',
+                 'foto-video': 'фото - видео',
+                 'kompyutery': 'компьютеры', 'ehlektronika': 'электроника',
+                 'bytovaya-tekhnika': 'бытовая техника', 'dom-dacha': 'дом-дача',
+                 'remont-i-stroitelstvo': 'ремонт и стройка',
+                 'krasota-i-zdorove': 'красота и здоровье', 'sport-otdyh': 'спорт и отдых',
+                 'hobbi-razvlecheniya': 'хобби и развлечения',
+                 'zhivotnye': 'животные', 'dlya-biznesa': 'для бизнеса', 'prochee': 'прочее'}
+
+subcategory = {
+    'nedvijimost': {'prodaja-kvartiri', 'prodaja-komnati', 'prodaja-doma', 'prodaja-uchastka', 'arenda-kvartiri',
+                    'arenda-komnati', 'arenda-doma', 'arenda-kvartiri-posutochno', 'arenda-komnati-posutochno',
+                    'arenda-doma-posutochno', 'kommercheskaya-nedvijimost', 'prochie-stroeniya'},
+    'auto': {'s-probegom', 'novyy'},
+    'uslugi': {'obuchenie', 'master-na-chas', 'krasota-zdorove', 'perevozki', 'remont-stroitelstvo', 'kompyuternye',
+               'delovye-uslugi',
+               'uborka', 'avtouslugi', 'remont-tekhniki', 'organizaciya-prazdnikov', 'foto-video-semka',
+               'izgotovlenie-na-zakaz',
+               'produkty-pitaniya', 'uhod-za-zhivotnymi', 'drugoe'},
+    'zayavki': {'obuchenie', 'master-na-chas', 'krasota-zdorove', 'perevozki', 'remont-stroitelstvo', 'kompyuternye',
+                'delovye-uslugi',
+                'uborka', 'avtouslugi', 'remont-tekhniki', 'organizaciya-prazdnikov', 'foto-video-semka',
+                'izgotovlenie-na-zakaz',
+                'produkty-pitaniya', 'uhod-za-zhivotnymi', 'drugoe'},
+    'zhenskaya-odezhda': {'zhenskaya-odezhda/aksessuary', 'bluzy-rubashki', 'dlya-beremennyh', 'verhnyaya',
+                          'golovnye-ubory',
+                          'domashnyaya', 'kombinezony', 'kupalniki', 'bele-kupalniki', 'obuv', 'pidzhaki-kostyumy',
+                          'platya-yubki',
+                          'svitery-tolstovki', 'sportivnaya', 'futbolki-topy', 'dzhinsy-bryuki', 'drugoe'},
+    'smartfony-planshety': {'smartfony', 'planshety', 'umnye-chasy', 'stacionarnye-telefony',
+                            'racii-i-sputnikovye-telefony', 'zapchasti',
+                            'vneshnie-akkumulyatory', 'zaryadnye-ustrojstva', 'chekhly', 'aksessuary'},
+    'avto-moto': {'avtozapchasti', 'shiny-diski', 'avtohimiya', 'avtoelektronika-i-gps', 'aksessuary-i-instrumenty',
+                  'audio-video', 'protivougonnye-ustrojstva', 'bagazhniki-farkopy', 'motoehkipirovka', 'drugoe'},
+    'detskaya-odezhda': {'aksessuary', 'bluzy-i-rubashki', 'verhnyaya-odezhda', 'golovnye-ubory', 'domashnyaya-odezhda',
+                         'kombinezony-i-bodi',
+                         'konverty', 'nizhnee-bele', 'obuv', 'pidzhaki-i-kostyumy', 'platya-i-yubki',
+                         'polzunki-i-raspashonki', 'svitery-i-tolstovki',
+                         'sportivnaya-odezhda', 'futbolki', 'shtany-i-shorty', 'drugoe'},
+    'rabota': {'avto-transport', 'ohrana-bezopasnost', 'kliningovye-i-bytovye-uslugi', 'rukovoditeli', 'gossluzhba',
+               'dobycha-syrja', 'domashnij-personal',
+               'izdatelstva-smi', 'it-internet', 'iskusstvo-razvlecheniya', 'roznichnaya-torgovlya-magaziny',
+               'marketing-reklama-pr', 'medicina-farmacevtika',
+               'bez-opyta-studentam', 'obrazovanie-nauka', 'aho-ofis', 'logistika-snabzhenie', 'prodazhi-torgovlya',
+               'proizvodstvo', 'restorany-kafe-obshchepit',
+               'selskoe-hozjajstvo', 'sport-krasota-zdorove', 'strahovanie', 'stroitelstvo-remont', 'turizm-hotels',
+               'upravlenie-nedvizhimostyu', 'kadrovye-sluzhby-hr',
+               'banki-finansy', 'jurist'},
+    'spetstehnika-moto': {'gruzoviki-avtobusy', 'vodnyy-transport', 'mototehnika-mototsikly', 'spetstehnika'},
+    'muzhskaya-odezhda': {'aksessuary', 'verhnyaya', 'golovnye-ubory', 'domashnyaya', 'kombinezony',
+                          'nizhnee-bele-plavki', 'obuv', 'pidzhaki-kostyumy',
+                          'rubashki', 'svitery-tolstovki', 'specodezhda', 'sportivnaya', 'futbolki-polo',
+                          'dzhinsy-bryuki', 'drugoe'},
+    'detskie': {'avtokresla', 'zdorove-i-uhod', 'kukly-igrushki', 'kolyaski', 'kormlenie-pitanie', 'kupanie', 'mebel',
+                'podguzniki-pelenki',
+                'radio-i-videonyani', 'tovary-dlya-mam', 'tovary-dlya-ucheby', 'drugoe'},
+    'hehndmejd': {'kosmetika', 'ukrasheniya', 'kukly-igrushki', 'oformlenie-interera', 'aksessuary',
+                  'oformlenie-prazdnikov', 'kancelyarskie-tovary',
+                  'posuda', 'drugoe'},
+    'foto-video': {'fotoapparaty', 'videokamery', 'videonablyudenie', 'obektivy', 'fotovspyshki', 'aksessuary',
+                   'shtativy-monopody',
+                   'studyinoe-oborudovanie', 'fotoramki', 'fotoprintery', 'binokli-teleskopy'},
+    'kompyutery': {'noutbuki', 'nastolnye-monobloki', 'monitory', 'klaviatury-i-myshi', 'printery-i-skanery',
+                   'setevoe-oborudovanie',
+                   'multimedia', 'nakopiteli-dannyh-i-kartridery', 'programmnoe-obespechenie',
+                   'ruli-dzhoistiki-geympady', 'komplektuyushchie', 'aksessuary'},
+    'ehlektronika': {'televizory-proektory', 'proektory', 'akusticheskie-sistemy', 'domashnie-kinoteatry',
+                     'mediapleery', 'muzykalnye-centry-i-magnitoly',
+                     'mp3-pleery', 'ehlektronnye-knigi', 'sputnikovoe-i-cifrovoe-tv', 'usiliteli-resivery', 'naushniki',
+                     'mikrofony'},
+    'bytovaya-tekhnika': {'vesy', 'bytovaya-tekhnika/vytyazhki', 'izmelchenie-i-smeshivanie', 'klimaticheskaya',
+                          'kulery-i-filtry-dlya-vody', 'plity',
+                          'posudomoechnye-mashiny', 'prigotovlenie-edy', 'prigotovlenie-napitkov', 'pylesosy',
+                          'stiralnye-mashiny', 'utyugi'},
+    'dom-dacha': {'bitovaya-himiya', 'divany-kresla', 'krovati', 'kuhonnaya-mebel', 'osveshchenie',
+                  'oformlenie-interera',
+                  'ohrana-signalizaciya', 'podstavki-tumby', 'posuda', 'rasteniya', 'sad-ogorod', 'sadovaya-mebel'},
+    'remont-i-stroitelstvo': {'dveri', 'izmeritelnye-instrumenty', 'okna', 'otoplenie-ventilyaciya', 'potolki',
+                              'ruchnye-instrumenty', 'santekhnika', 'strojmaterialy', 'ehlektrika',
+                              'ehlektroinstrumenty', 'drugoe'},
+    'krasota-i-zdorove': {'makiyazh', 'manikyur-pedikyur', 'medicinskie-tovary', 'parfyumeriya', 'strizhka-brite',
+                          'uhod-za-volosami',
+                          'uhod-za-licom', 'feny-ukladka', 'tatu-i-tatuazh', 'solyarii-i-zagar', 'solyarii-i-zagar',
+                          'drugoe'},
+    'sport-otdyh': {'sportivnaya-zashhita', 'velosipedy-samokaty', 'roliki-skejtbording', 'samokaty-i-giroskutery',
+                    'bilyard-i-bouling',
+                    'vodnye-vidy', 'edinoborstva', 'zimnie-vidy', 'igry-s-myachom', 'ohota-rybalka', 'turizm',
+                    'trenazhery-fitnes',
+                    'sportivnoe-pitanie', 'drugoe'},
+    'hobbi-razvlecheniya': {'bilety', 'filmy', 'konsoli-igry', 'igry-dlya-pristavok-i-pk', 'knigi-zhurnaly',
+                            'kollekcionirovanie', 'materialy-dlya-tvorchestva',
+                            'muzyka', 'muzykalnye-instrumenti', 'nastolnye-igry', 'drugoe'},
+    'zhivotnye': {'sobaki', 'koshki', 'pticy', 'gryzuny', 'rybki', 'selhoz-zhivotnye', 'drugoe', 'tovary',
+                  'akvariumistika'},
+    'dlya-biznesa': {'gotovyi-biznes', 'oborudovanie'},
+    'prochee': {'drugoe'}
+}
+///////////////////////////////////main/////////////////////////////////////////
+import datetime
+import logging
+from aiogram import Bot, Dispatcher, executor, types
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import StatesGroup, State
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ParseMode, InlineQuery, InputTextMessageContent, \
+    InlineQueryResultArticle
+
+import config
+import db_map
+from parser import get_adverts
+from categories import category, category_dict, subcategory
+from db_map import engine, session_scope, UsersTable
+
+logging.basicConfig(level=logging.INFO)
+
+bot = Bot(token=config.BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
+
+
+class Params(StatesGroup):
+    cat = State()
+    subcat = State()
+    min_price = State()
+    max_price = State()
+    city = State()
+
+
+# с первым сообщением ебимь как хочешь  как говориться ротного вообще не ебёт , юудб ты хоть эмо , будь ты хоть гот
+@dp.message_handler(commands='parse')
+async def send_welcome(message: types.Message, state: FSMContext):
+    sub_validate = False
+    with session_scope() as session:
+
+        slave = session.query(UsersTable).filter_by(id=message.from_user.id).first()
+
+        if slave.sub > datetime.datetime.now():
+            sub_validate = True
+
+        if not sub_validate:
+            await message.answer(
+                '🔒 <i>Для доступа к парсеру нужно иметь подписку, можешь приобрести ее у КОЛЯ ЕБИСЬ С ПОДПИСКАМИ САМ')
+            return
+    keyboard_list = []
+    for i in category:
+        keyboard_list.append(InlineKeyboardButton(category_dict[i], callback_data=f'cat:{i}'))
+    keyboard = [keyboard_list[i:i + 2] for i in range(0, len(keyboard_list), 2)]
+
+    await message.reply("📚 <code>Выбери категорию:</code>",
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+                        parse_mode=ParseMode.HTML
+                        )
+
+    await Params.cat.set()
+
+
+@dp.callback_query_handler(state=Params.cat, text_contains='cat:')
+async def send_welcome(query: types.CallbackQuery, state: FSMContext):
+    cat = query.data.split(':')[1]
+    async with state.proxy() as data:
+        data['cat'] = cat
+    keyboard_list = []
+    subcat = subcategory[cat]
+    for i in subcat:
+        keyboard_list.append(InlineKeyboardButton(subcat[i], callback_data=f'subcat:{i}'))
+    keyboard = [keyboard_list[i:i + 2] for i in range(0, len(keyboard_list), 2)]
+    keyboard.append([InlineKeyboardButton('◀️ Назад', callback_data='back')])
+
+    await query.message.reply("<code>📕 Выбери подкатегорию:</code>",
+                              reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+                              parse_mode=ParseMode.HTML)
+
+    await Params.subcat.set()
+
+
+@dp.callback_query_handler(state='*', text_contains='back')
+async def send_welcome(query: types.CallbackQuery, state: FSMContext):
+    step = str(await state.get_state()).split(':')[1]
+    if step == 'subcat':
+        keyboard_list = []
+        for i in category:
+            keyboard_list.append(InlineKeyboardButton(category_dict[i], callback_data=f'cat:{i}'))
+        keyboard = [keyboard_list[i:i + 2] for i in range(0, len(keyboard_list), 2)]
+
+        await query.message.edit_text("Введи категорию",
+                                      reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+                                      parse_mode=ParseMode.HTML
+                                      )
+
+        await Params.subcat.set()
+    if step == 'min_price':
+
+        cat = await  state.get_data()
+        keyboard_list = []
+        subcat = subcategory[cat['cat']]
+        for i in subcat:
+            keyboard_list.append(InlineKeyboardButton(subcat[i], callback_data=f'subcat:{i}'))
+        keyboard = [keyboard_list[i:i + 2] for i in range(0, len(keyboard_list), 2)]
+        keyboard.append([InlineKeyboardButton('◀️ Назад', callback_data='back')])
+
+        await query.message.edit_text("📚 <code>Выбери категорию:</code>",
+                                      reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+                                      parse_mode=ParseMode.HTML)
+
+        await Params.min_price.set()
+    if step == 'max_price':
+        await query.message.edit_text("<code>🔽 Введи максимальную цену объявлений.</code>",
+                                      reply_markup=InlineKeyboardMarkup(
+                                          inline_keyboard=[[InlineKeyboardButton('◀️ Назад', callback_data='back')]]),
+                                      parse_mode=ParseMode.HTML)
+        await Params.max_price.set()
+    if step == 'city':
+        await query.message.edit_text("<code>🔽 Введи инимальную цену объявлений.</code>",
+                                      reply_markup=InlineKeyboardMarkup(
+                                          inline_keyboard=[[InlineKeyboardButton('◀️ Назад', callback_data='back')]]),
+                                      parse_mode=ParseMode.HTML)
+        await Params.city.set()
+    await Params.previous()
+
+
+@dp.callback_query_handler(state=Params.subcat, text_contains='subcat:')
+async def send_welcome(query: types.CallbackQuery, state: FSMContext):
+    async with state.proxy() as data:
+        data['subcat'] = query.data.split(':')[1]
+    await query.message.reply("<code>🔽 Введи инимальную цену объявлений.</code>",
+                              reply_markup=InlineKeyboardMarkup(
+                                  inline_keyboard=[[InlineKeyboardButton('◀️ Назад', callback_data='back')]]),
+                              parse_mode=ParseMode.HTML)
+    await Params.min_price.set()
+
+
+@dp.message_handler(state=Params.min_price)
+async def send_welcome(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['min_price'] = message.text
+
+    await message.reply("<code>🔽 Введи максимальную цену объявлений.</code>",
+                        reply_markup=InlineKeyboardMarkup(
+                            inline_keyboard=[[InlineKeyboardButton('◀️ Назад', callback_data='back')]]),
+                        parse_mode=ParseMode.HTML)
+
+    await Params.max_price.set()
+
+
+@dp.message_handler(state=Params.max_price)
+async def send_welcome(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['max_price'] = message.text
+    await message.reply("<code>🏘 Введи город как на сайте, только англ. буквами</code>",
+                        reply_markup=InlineKeyboardMarkup(
+                            inline_keyboard=[[InlineKeyboardButton('◀️ Назад', callback_data='back')]]),
+                        parse_mode=ParseMode.HTML)
+
+    await Params.next()
+
+
+@dp.message_handler(state=Params.city)
+async def send_welcome(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['city'] = message.text
+    await message.reply("Парсинг начат!",
+                        parse_mode=ParseMode.HTML)
+    data = await state.get_data()
+    await get_adverts(f'https://youla.ru/{data["cat"]}/{data["subcat"]}/', data["min_price"], data["max_price"],
+                      data["city"],
+                      (message.bot, message.from_user.id, message))
+    await state.finish()
+
+
+#  опять блять подписка, я заебался и так аухуеешь отправлять xls файл
+@dp.inline_handler()
+#  я тупо удаляю эти блоки кода , чекер я переписал, просто к нему подрубись и на этом всё
+
+def main():
+    # db_map.Base.metadata.drop_all(db_map.engine)
+    db_map.Base.metadata.create_all(engine)
+
+    print('[+]: BOT STARTED')
+
+    executor.start_polling(dp, skip_updates=True)
+
+
+if __name__ == '__main__':
+    main()
+///////////////////////////////////DB_MAP/////////////////////////////////////////
+from config import DB_URL
+Base = declarative_base()
+engine = create_engine(DB_URL, echo=False, pool_size=8, max_overflow=12)
+session_factory = sessionmaker(bind=engine)
+Session = scoped_session(session_factory)
+@contextmanager
+def session_scope():
+    session = Session()
+
+    try:
+        yield session
+        session.commit()
+
+    except:
+        session.rollback()
+        raise
+
+    finally:
+        session.close()
+
+
+class UsersTable(Base):
+    __tablename__ = 'users_table'
+    id = Column(BigInteger, primary_key=True, nullable=False)
+    sub = Column(TIMESTAMP)
+    
+    
+    
