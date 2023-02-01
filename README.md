@@ -1,0 +1,1 @@
+in this repository, I store contacts written by me for customers according to specific technical specifications, each script has a description of the task and comments that can help you rework the bot for you.
